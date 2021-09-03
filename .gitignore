@@ -1,0 +1,8 @@
+build/
+
+# GNAT Studio files
+gnatinspect.db*
+*.cgpr
+*-loc.xml
+.#*#
+*__GNATPP-TEMP

@@ -1,0 +1,108 @@
+project Swarm is
+   type Mode_Type is ("debug", "release");
+   Mode : Mode_Type := external ("mode", "debug");
+   Build_Prefix := "build/" & Mode;
+
+   type Platform_Type is ("linux", "macos", "windows");
+   type Platform_Selection_Type is ("auto", "linux", "macos", "windows");
+   Platform_Selection : Platform_Selection_Type := external ("platform", "auto");
+   Target_Name := Swarm'Target; -- used in autodetection of platform
+   Maybe_Platform := "unknown";
+
+   -- Attempt to detect current platform. If 'auto' is passed, we try
+   -- a number of recognised target names, and default to using the
+   -- target directly.
+   case Platform_Selection is
+      when "auto" =>
+         case Target_Name is
+            when "x86_64-linux" =>
+               Maybe_Platform := "linux";
+            when "x86_64-darwin" =>
+               Maybe_Platform := "macos";
+            when "x86_64-windows" =>
+               Maybe_Platform := "windows";
+            when others =>
+               Maybe_Platform := Swarm'Target;
+         end case;
+      when others =>
+         Maybe_Platform := Platform_Selection;
+   end case;
+
+   -- Set our resolved platform. This will error if Maybe_Platform is
+   -- not a recognised value in Platform_Type.
+   Platform : Platform_Type := Maybe_Platform;
+
+   for Main use ("swarm.adb");
+   for Source_Dirs use ("src/**", "bindings");
+   for Object_Dir use Build_Prefix & "/obj";
+   for Exec_Dir use Build_Prefix;
+
+   for Create_Missing_Dirs use "True";
+
+   case Platform is
+      when "linux" =>
+         for Source_Dirs use Swarm'Source_Dirs & ("bindings/linux");
+      when "macos" =>
+         for Source_Dirs use Swarm'Source_Dirs & ("bindings/macos");
+      when "windows" =>
+         for Source_Dirs use Swarm'Source_Dirs & ("bindings/windows");
+   end case;
+
+   package Compiler is
+      for Default_Switches ("ada") use (
+         "-fstack-check",
+         "-g",        -- enable debug symbols
+         "-gnat2012", -- use Ada 2012 standard
+         "-gnata",    -- enable assertions
+         "-gnateE",   -- enable extra exception information
+         "-gnatE",    -- use dynamic elaboration model
+         "-gnatwa",   -- enable most optional warnings
+         "-gnatyAbBfhiklnOrStux" -- set source code style
+      );
+
+      case Mode is
+         when "debug" =>
+            for Default_Switches ("ada") use Compiler'Default_Switches ("ada") & (
+               "-gnato",   -- enable numeric overflow checking
+               "-gnatVa",  -- enable all validity checks
+               "-Og"       -- only optimisations that don't interfere with debugging
+            );
+         when "release" =>
+            for Default_Switches ("ada") use Compiler'Default_Switches ("ada") & (
+               "-gnatn",   -- inline subprograms marked with 'Inline' pragma
+               "-gnatVd",  -- enable default validity checks
+               "-O2"       -- high optimisation
+            );
+      end case;
+   end Compiler;
+
+   package Linker is
+      case Platform is
+         when "linux" =>
+            for Default_Switches ("ada") use ("-lglut", "-lGLU", "-lGL", "-lX11", "-lXext", "-lm", "-s");
+         when "macos" =>
+            for Default_Switches ("ada") use ("-bind_at_load", "-framework", "OpenGL", "-framework", "GLUT", "-lm");
+         when "windows" =>
+            for Default_Switches ("ada") use (
+               "bindings/windows/lib/x86-64/static/libglee.a",
+               "-Lbindings/windows/lib/x86-64/dynamic",
+               "-lopengl32",
+               "-lglu32",
+               "-lfreeglut",
+               "-mwindows"
+            );
+      end case;
+
+      case Mode is
+         when "release" =>
+            case Platform is
+               when "linux" | "windows" =>
+                  for Default_Switches ("ada") use Linker'Default_Switches ("ada") & ("--gc-sections");
+               when "macos" =>
+                  for Default_Switches ("ada") use Linker'Default_Switches ("ada") & ("-dead_strip");
+            end case;
+         when others =>
+            null;
+      end case;
+   end Linker;
+end Swarm;
