@@ -14,11 +14,11 @@ package body Vehicle_Task_Type is
    use Vehicle_Ordered_Map;
 
    Is_Debug_Print        : constant Boolean  := True;
-   Max_Forwards          : constant Integer  := 3;
+   Max_Forwards          : constant Integer  := 5;
    Coordinator_Dist      : constant Real     := 0.01;
    Waiting_Dist          : constant Real     := 0.25;
    Release_Delay         : constant Positive := 5;
-   Notify_Delay          : constant Positive := 60;
+   Notify_Delay          : constant Positive := 20;
 
    procedure Debug_Print (Message : String) is
    begin
@@ -160,12 +160,6 @@ package body Vehicle_Task_Type is
                end if;
             when Release =>
                if Last_Message.Target_No = Vehicle_No then
-                  Send ((Purpose   => Acknowledge,
-                         Sender_No => Vehicle_No,
-                         Target_No => Last_Message.Sender_No,
-                         Charge    => Current_Charge,
-                         Forward_Count => 0
-                        ));
                   Target_Globe_Pos := Last_Message.Globe_Pos;
                   Current_State := Approaching_Globe;
                   Debug_Print (Positive'Image (Vehicle_No) &
@@ -338,7 +332,11 @@ package body Vehicle_Task_Type is
                      Pause_Duration := Pause_Duration - 1;
                   end if;
                when Waiting_For_Turn =>
-                  if Pause_Duration < 1 then
+                  if Current_Charge < 0.2 then
+                     Current_State := Approaching_Globe;
+                     Debug_Print (Positive'Image (Vehicle_No) &
+                                    " approaching Globe due to critical charge");
+                  elsif Pause_Duration < 1 then
                      Send ((Purpose   => Notify_Of_Charge,
                             Sender_No => Vehicle_No,
                             Target_No => Coordinator_No,
