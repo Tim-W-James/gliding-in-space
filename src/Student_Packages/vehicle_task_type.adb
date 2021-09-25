@@ -14,9 +14,12 @@ package body Vehicle_Task_Type is
    use Vehicle_Ordered_Map;
 
    Is_Debug_Print        : constant Boolean  := True;
-   Max_Forwards          : constant Integer  := 7;
+   Max_Forwards          : constant Integer  := 0;
    New_Coordinator_Delay : constant Positive := 10;
-   Release_Delay         : constant Positive := 10;
+   Release_Delay         : constant Positive := 2;
+   Reset_Delay           : constant Positive := 60;
+   Max_Mailbox_Checks    : constant Integer := 20;
+   Attempts_Per_Release  : constant Integer := 2;
 
    procedure Debug_Print (Message : String) is
    begin
@@ -90,6 +93,7 @@ package body Vehicle_Task_Type is
       Wait_Duration      : Integer := 0;
       Lowest_Charge_No   : Positive;
       Greatest_Charge_No : Positive;
+      Remaining_Attempts : Integer := Attempts_Per_Release;
 
       procedure Respond_To_Message_Searching is
       begin
@@ -103,16 +107,16 @@ package body Vehicle_Task_Type is
                       Charge    => Current_Charge,
                       Forward_Count => 0
                      ));
-               --  Set_Throttle (0.01);
+               --  Set_Throttle (0.3);
                Target_Globe_Pos := Last_Message.Globe_Pos;
                Current_State    := Waiting_For_Turn;
                Waiting_Vehicles.Clear;
+               Wait_Duration := Reset_Delay;
                Debug_Print (Positive'Image (Vehicle_No) &
                               " is now waiting on Coordinator " &
                               Positive'Image (Coordinator_No));
 
                --  Set_Destination (Target_Globe_Pos);
-               --  Set_Throttle (0.2);
                --  Send ((Purpose   => Broadcast_Globe_Pos,
                --         Sender_No => Coordinator_No,
                --         Target_No => Coordinator_No,
@@ -134,18 +138,17 @@ package body Vehicle_Task_Type is
                   Debug_Print (Positive'Image (Vehicle_No) &
                                  " Coordinator received release acknowledgment from " &
                                  Positive'Image (Last_Message.Sender_No));
-                  if not (Coordinator_No = Last_Message.Sender_No) then
-                     Put_Line ("ERROR - Coordinator_No does not match on acknowledge");
-                  end if;
+                  Waiting_Vehicles.Exclude (Last_Message.Sender_No);
+                  Remaining_Attempts := Attempts_Per_Release;
                end if;
             when Notify_Of_Charge =>
                if Last_Message.Target_No = Vehicle_No then
-                  Send ((Purpose   => Acknowledge,
-                         Sender_No => Vehicle_No,
-                         Target_No => Last_Message.Sender_No,
-                         Charge    => Current_Charge,
-                         Forward_Count => 0
-                        ));
+                  --  Send ((Purpose   => Acknowledge,
+                  --         Sender_No => Vehicle_No,
+                  --         Target_No => Last_Message.Sender_No,
+                  --         Charge    => Current_Charge,
+                  --         Forward_Count => 0
+                  --        ));
                   Waiting_Vehicles.Include (Last_Message.Sender_No, Last_Message.Charge);
                   Debug_Print (Positive'Image (Vehicle_No) &
                                  " Coordinator got charge info from " &
@@ -171,8 +174,8 @@ package body Vehicle_Task_Type is
                            ));
                      Coordinator_No := Last_Message.Sender_No;
                      Current_State  := Waiting_For_Turn;
+                     Wait_Duration  := Reset_Delay;
                      Waiting_Vehicles.Clear;
-                     Wait_Duration := 0;
                      Debug_Print (Positive'Image (Vehicle_No) &
                                     " yielded Coordinator status to " &
                                     Positive'Image (Coordinator_No));
@@ -205,17 +208,17 @@ package body Vehicle_Task_Type is
       begin
          Receive (Last_Message);
          case Last_Message.Purpose is
-            when Acknowledge =>
-               if Last_Message.Target_No = Vehicle_No then
-                  Debug_Print (Positive'Image (Vehicle_No) &
-                                 " received charge acknowledgment by Coordinator " &
-                                 Positive'Image (Coordinator_No));
-                  if not (Coordinator_No = Last_Message.Sender_No) then
-                     Put_Line ("ERROR - Coordinator_No does not match on acknowledge");
-                  end if;
-               end if;
+            --  when Acknowledge =>
+            --     if Last_Message.Target_No = Vehicle_No then
+            --        Debug_Print (Positive'Image (Vehicle_No) &
+            --                       " received charge acknowledgment by Coordinator " &
+            --                       Positive'Image (Coordinator_No));
+            --        if not (Coordinator_No = Last_Message.Sender_No) then
+            --           Put_Line ("ERROR - Coordinator_No does not match on acknowledge");
+            --        end if;
+            --     end if;
             when Release =>
-               if Last_Message.Target_No = Vehicle_No then
+               if True then
                   Send ((Purpose   => Acknowledge,
                          Sender_No => Vehicle_No,
                          Target_No => Last_Message.Sender_No,
@@ -225,7 +228,8 @@ package body Vehicle_Task_Type is
                   Target_Globe_Pos := Last_Message.Globe_Pos;
                   Set_Destination (Target_Globe_Pos);
                   Current_State := Approaching_Globe;
-                  Set_Throttle (1.0);
+                  Wait_Duration := Reset_Delay;
+                  --  Set_Throttle (1.0);
                   Debug_Print (Positive'Image (Vehicle_No) &
                                  " recieved release and travelling to Globe from Coordinator " &
                                  Positive'Image (Coordinator_No));
@@ -237,13 +241,13 @@ package body Vehicle_Task_Type is
                          Forward_Count => Last_Message.Forward_Count + 1,
                          Globe_Pos     => Last_Message.Globe_Pos
                         ));
-                  --  Debug_Print (Positive'Image (Vehicle_No) &
-                  --                 " forwarded release for " &
-                  --                 Positive'Image (Last_Message.Target_No));
+                  Debug_Print (Positive'Image (Vehicle_No) &
+                                 " forwarded release for " &
+                                 Positive'Image (Last_Message.Target_No));
                end if;
             when Transfer_Coordinator =>
                if Last_Message.Target_No = Vehicle_No then
-                  --  Set_Throttle (0.01);
+                  --  Set_Throttle (0.3);
                   -- become new Coordinator
                   Waiting_Vehicles := Last_Message.Waiting;
                   Waiting_Vehicles.Include (Vehicle_No, Current_Charge);
@@ -313,7 +317,7 @@ package body Vehicle_Task_Type is
                -- find nearest globe, if any broadcast and become coordinator
                if Current_Charge < 0.9 and then not (Energy_Globes_Around'Length = 0) then
                   --  Set_Destination (Target_Globe_Pos);
-                  --  Set_Throttle (0.2);
+                  --  Set_Throttle (0.3);
                   Target_Globe_Pos := Find_Closest_Globe (Energy_Globes_Around);
                   Send ((Purpose   => Broadcast_Globe_Pos,
                          Sender_No => Vehicle_No,
@@ -336,7 +340,7 @@ package body Vehicle_Task_Type is
                   else
                      Lowest_Charge_No := Min_Map_Charge (Waiting_Vehicles);
                      if Lowest_Charge_No = Vehicle_No and then Current_Charge < 0.5 then
-                        Waiting_Vehicles.Delete (Lowest_Charge_No);
+                        Waiting_Vehicles.Exclude (Lowest_Charge_No);
                         if not Waiting_Vehicles.Is_Empty then
                            Greatest_Charge_No := Max_Map_Charge (Waiting_Vehicles);
                            Send ((Purpose   => Transfer_Coordinator,
@@ -357,10 +361,9 @@ package body Vehicle_Task_Type is
                         Set_Destination (Target_Globe_Pos);
                         Set_Throttle (1.0);
                         Current_State := Approaching_Globe;
-                        Wait_Duration := 0;
+                        Wait_Duration := Reset_Delay;
                      elsif not (Lowest_Charge_No = Vehicle_No) then
                         Wait_Duration := Release_Delay;
-                        Waiting_Vehicles.Delete (Lowest_Charge_No);
                         Send ((Purpose   => Release,
                                Sender_No => Vehicle_No,
                                Target_No => Lowest_Charge_No,
@@ -369,19 +372,32 @@ package body Vehicle_Task_Type is
                                Forward_Count => 0
                               ));
                         Debug_Print (Positive'Image (Lowest_Charge_No) &
-                                       " released from waiting by " &
+                                       " attemped to be released from waiting by Coordinator " &
                                        Positive'Image (Vehicle_No));
+                        if Remaining_Attempts < 1 then
+                           Waiting_Vehicles.Exclude (Lowest_Charge_No);
+                           Remaining_Attempts := Attempts_Per_Release;
+                           Debug_Print (Positive'Image (Vehicle_No) &
+                                          " gave up attempting to release " &
+                                          Positive'Image (Lowest_Charge_No));
+                        else
+                           Remaining_Attempts := Remaining_Attempts - 1;
+                        end if;
                      end if;
                   end if;
                end if;
             when Waiting_For_Turn =>
-               null;
-               -- forward
+               if Wait_Duration < 1 then
+                  Current_State := Searching;
+                  Debug_Print (Positive'Image (Vehicle_No) &
+                                 " returning to searching after waiting too long on Coordinator "
+                               & Positive'Image (Coordinator_No));
+               end if;
             when Approaching_Globe =>
                if Current_Charge > 0.8 then
                   Current_State := Searching;
                   Debug_Print (Positive'Image (Vehicle_No) & " finished travelling to Globe");
-                  Set_Throttle (0.5);
+                  --  Set_Throttle (0.5);
                   if not (Energy_Globes_Around'Length = 0) then
                      Send ((Purpose   => Broadcast_Globe_Pos,
                             Sender_No => Coordinator_No,
@@ -390,8 +406,12 @@ package body Vehicle_Task_Type is
                             Globe_Pos => Target_Globe_Pos,
                             Forward_Count => 1
                            ));
+                  elsif  Wait_Duration < 1 then
+                     Current_State := Searching;
+                     Debug_Print (Positive'Image (Vehicle_No) &
+                                    " failed to reach Globe");
                   end if;
-                     delay 0.5;
+                  delay 0.1;
                   -- send ack?
                end if;
             end case;
@@ -399,19 +419,71 @@ package body Vehicle_Task_Type is
             while Messages_Waiting loop
                declare
                   Iterations : Integer := 0;
-                  Max_Iterations : constant Integer := 100;
                begin
                   case Current_State is
                   when Searching =>
                      Respond_To_Message_Searching;
                   when Coordinator =>
                      Respond_To_Message_Coordinator;
+                     if Wait_Duration < 1 then
+                        if Waiting_Vehicles.Is_Empty then
+                           Put_Line ("ERROR - no vehicles waiting");
+                        else
+                           Lowest_Charge_No := Min_Map_Charge (Waiting_Vehicles);
+                           if Lowest_Charge_No = Vehicle_No and then Current_Charge < 0.5 then
+                              Waiting_Vehicles.Exclude (Lowest_Charge_No);
+                              if not Waiting_Vehicles.Is_Empty then
+                                 Greatest_Charge_No := Max_Map_Charge (Waiting_Vehicles);
+                                 Send ((Purpose   => Transfer_Coordinator,
+                                        Sender_No => Vehicle_No,
+                                        Target_No => Greatest_Charge_No,
+                                        Charge    => Current_Charge,
+                                        Waiting   => Waiting_Vehicles,
+                                        Forward_Count => 0
+                                       ));
+                                 Debug_Print (Positive'Image (Vehicle_No) &
+                                                " transferring Coordinator due to charge " & Vehicle_Charges'Image (Current_Charge) &
+                                                " and travelling to Globe, making" & Positive'Image (Greatest_Charge_No) &
+                                                " the new Coordinator");
+                              else
+                                 Debug_Print (Positive'Image (Vehicle_No) &
+                                                " Coordinator travelling to Globe, Waiting_Vehicles map empty");
+                              end if;
+                              Set_Destination (Target_Globe_Pos);
+                              --  Set_Throttle (1.0);
+                              Current_State := Approaching_Globe;
+                              Wait_Duration := Reset_Delay;
+                           elsif not (Lowest_Charge_No = Vehicle_No) then
+                              --  Wait_Duration := Release_Delay;
+                              Send ((Purpose   => Release,
+                                     Sender_No => Vehicle_No,
+                                     Target_No => Lowest_Charge_No,
+                                     Charge    => Current_Charge,
+                                     Globe_Pos => Target_Globe_Pos,
+                                     Forward_Count => 0
+                                    ));
+                              Debug_Print (Positive'Image (Lowest_Charge_No) &
+                                             " attemped to be released from waiting by Coordinator " &
+                                             Positive'Image (Vehicle_No));
+                              if Remaining_Attempts < 1 then
+                                 Waiting_Vehicles.Exclude (Lowest_Charge_No);
+                                 Remaining_Attempts := Attempts_Per_Release;
+                                 Debug_Print (Positive'Image (Vehicle_No) &
+                                                " gave up attempting to release " &
+                                                Positive'Image (Lowest_Charge_No));
+                              else
+                                 Remaining_Attempts := Remaining_Attempts - 1;
+                              end if;
+                           end if;
+                        end if;
+                     end if;
+                     Wait_Duration := Wait_Duration - 1;
                   when Waiting_For_Turn =>
                      Respond_To_Message_Waiting_For_Turn;
                   when others =>
                      null;
                   end case;
-                  if Iterations > Max_Iterations then
+                  if Iterations > Max_Mailbox_Checks then
                      exit;
                   end if;
                   Iterations := Iterations + 1;
