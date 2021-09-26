@@ -1,16 +1,18 @@
 with Ada.Text_IO;                use Ada.Text_IO;
 with Exceptions;                 use Exceptions;
 with Real_Type;                  use Real_Type;
---  with Generic_Sliding_Statistics;
---  with Rotations;                  use Rotations;
 with Vectors_3D;                 use Vectors_3D;
 with Vehicle_Interface;          use Vehicle_Interface;
 with Vehicle_Message_Type;       use Vehicle_Message_Type;
---  with Swarm_Structures;           use Swarm_Structures;
 with Swarm_Structures_Base;      use Swarm_Structures_Base;
+with Ada.Containers.Indefinite_Ordered_Maps;
 
 package body Vehicle_Task_Type is
 
+   package Vehicle_Ordered_Map is new
+     Ada.Containers.Indefinite_Ordered_Maps
+       (Key_Type        => Positive,
+        Element_Type    => Vehicle_Charges);
    use Vehicle_Ordered_Map;
 
    Is_Debug_Print        : constant Boolean  := True;
@@ -20,6 +22,7 @@ package body Vehicle_Task_Type is
    Release_Delay         : constant Positive := 5;
    Notify_Delay          : constant Positive := 20;
 
+   -- print to console if enabled
    procedure Debug_Print (Message : String) is
    begin
       if Is_Debug_Print then
@@ -27,6 +30,7 @@ package body Vehicle_Task_Type is
       end if;
    end Debug_Print;
 
+   -- find vehicle ID with lowest charge
    function Min_Map_Charge (M : Map) return Positive is
       Current_Min_Val : Vehicle_Charges := Vehicle_Charges'Last;
       Current_Min_Key : Positive := M.First_Key;
@@ -40,6 +44,7 @@ package body Vehicle_Task_Type is
       return Current_Min_Key;
    end Min_Map_Charge;
 
+   -- find vehicle ID with highest charge
    function Max_Map_Charge (M : Map) return Positive is
       Current_Max_Val : Vehicle_Charges := Vehicle_Charges'First;
       Current_Max_Key : Positive := M.First_Key;
@@ -53,6 +58,7 @@ package body Vehicle_Task_Type is
       return Current_Max_Key;
    end Max_Map_Charge;
 
+   -- merge two maps and store result in second input
    procedure Combine_Maps (To_Add : in Map; Result : in out Map) is
    begin
       for I in To_Add.Iterate loop
@@ -72,24 +78,24 @@ package body Vehicle_Task_Type is
       Lowest_Charge_No   : Positive;
 
       function Calculate_Distance_To_Pos (Pos : Positions) return Real is
-         VectorDistance : constant Positions := Pos - Position;
+         Vector_Distance : constant Positions := Pos - Position;
       begin
-         return abs (VectorDistance (x)) + abs (VectorDistance (y)) + abs (VectorDistance (z));
+         return abs (Vector_Distance (x)) + abs (Vector_Distance (y)) + abs (Vector_Distance (z));
       end;
 
       function Find_Closest_Globe (Globes : Energy_Globes) return Positions is
-         ClosestGlobeDist : Real := Real'Last;
-         ClosestGlobePos  : Positions;
-         CurrentGlobeDist : Real;
+         Closest_Globe_Dist : Real := Real'Last;
+         Closest_Globe_Pos  : Positions;
+         Current_Globe_Dist : Real;
       begin
          for I in Globes'Range loop
-            CurrentGlobeDist := Calculate_Distance_To_Pos (Globes (I).Position);
-            if CurrentGlobeDist < ClosestGlobeDist then
-               ClosestGlobeDist := CurrentGlobeDist;
-               ClosestGlobePos  := Globes (I).Position;
+            Current_Globe_Dist := Calculate_Distance_To_Pos (Globes (I).Position);
+            if Current_Globe_Dist < Closest_Globe_Dist then
+               Closest_Globe_Dist := Current_Globe_Dist;
+               Closest_Globe_Pos := Globes (I).Position;
             end if;
          end loop;
-         return ClosestGlobePos;
+         return Closest_Globe_Pos;
       end;
 
       procedure Respond_To_Message_Searching is
@@ -97,7 +103,7 @@ package body Vehicle_Task_Type is
          Receive (Last_Message);
          case Last_Message.Purpose is
             when Broadcast_Globe_Pos =>
-               -- Globe located via Coordinator, wait for turn
+               -- Globe located via Coordinator, follow Coordinator and wait for turn to approach
                Send ((Purpose   => Notify_Of_Charge,
                       Sender_No => Vehicle_No,
                       Target_No => Last_Message.Sender_No,
@@ -109,9 +115,6 @@ package body Vehicle_Task_Type is
                Current_State    := Waiting_For_Turn;
                Waiting_Vehicles.Clear;
                Pause_Duration := Notify_Delay;
-               --  Debug_Print (Positive'Image (Vehicle_No) &
-               --                 " is now waiting on Coordinator " &
-               --                 Positive'Image (Coordinator_No));
             when others =>
                null;
          end case;
@@ -121,19 +124,14 @@ package body Vehicle_Task_Type is
       begin
          Receive (Last_Message);
          case Last_Message.Purpose is
-            when Acknowledge =>
-               if Last_Message.Target_No = Vehicle_No then
-                  Waiting_Vehicles.Exclude (Last_Message.Sender_No);
-               end if;
             when Notify_Of_Charge =>
+               -- receive charge information from waiting vehicles to assess which to release
                if Last_Message.Target_No = Vehicle_No then
                   Waiting_Vehicles.Include (Last_Message.Sender_No, Last_Message.Charge);
                   Debug_Print (Positive'Image (Vehicle_No) &
                                  " Coordinator got charge info from " &
                                  Positive'Image (Last_Message.Sender_No));
                end if;
-            when Transfer_Coordinator =>
-               null;
             when others =>
                null;
          end case;
@@ -154,18 +152,17 @@ package body Vehicle_Task_Type is
                          Globe_Pos => Target_Globe_Pos,
                          Forward_Count => Last_Message.Forward_Count + 1
                         ));
-                  --  Debug_Print (Positive'Image (Vehicle_No) &
-                  --                 " forwarded Globe pos from " &
-                  --                 Positive'Image (Last_Message.Sender_No));
                end if;
             when Release =>
                if Last_Message.Target_No = Vehicle_No then
+                  -- vehicle's turn to approach globe
                   Target_Globe_Pos := Last_Message.Globe_Pos;
                   Current_State := Approaching_Globe;
                   Debug_Print (Positive'Image (Vehicle_No) &
                                  " recieved release and travelling to Globe from Coordinator " &
                                  Positive'Image (Coordinator_No));
                elsif Last_Message.Forward_Count < Max_Forwards then
+                  -- forward release message
                   Send ((Purpose       => Release,
                          Sender_No     => Last_Message.Sender_No,
                          Target_No     => Last_Message.Target_No,
@@ -173,12 +170,7 @@ package body Vehicle_Task_Type is
                          Forward_Count => Last_Message.Forward_Count + 1,
                          Globe_Pos     => Last_Message.Globe_Pos
                         ));
-                  --  Debug_Print (Positive'Image (Vehicle_No) &
-                  --                 " forwarded release for " &
-                  --                 Positive'Image (Last_Message.Target_No));
                end if;
-            when Transfer_Coordinator =>
-               null;
             when others =>
                null;
          end case;
@@ -199,26 +191,7 @@ package body Vehicle_Task_Type is
                          Globe_Pos => Target_Globe_Pos,
                          Forward_Count => Last_Message.Forward_Count + 1
                         ));
-                  --  Debug_Print (Positive'Image (Vehicle_No) &
-                  --                 " forwarded Globe pos from " &
-                  --                 Positive'Image (Last_Message.Sender_No));
                end if;
-            when Release =>
-               null;
-               --  if Last_Message.Forward_Count < Max_Forwards then
-               --     Send ((Purpose       => Release,
-               --            Sender_No     => Last_Message.Sender_No,
-               --            Target_No     => Last_Message.Target_No,
-               --            Charge        => Last_Message.Charge,
-               --            Forward_Count => Last_Message.Forward_Count + 1,
-               --            Globe_Pos     => Last_Message.Globe_Pos
-               --           ));
-               --     Debug_Print (Positive'Image (Vehicle_No) &
-               --                    " forwarded release for " &
-               --                    Positive'Image (Last_Message.Target_No));
-               --  end if;
-            when Transfer_Coordinator =>
-               null;
             when others =>
                null;
          end case;
@@ -249,9 +222,6 @@ package body Vehicle_Task_Type is
 
             -- message receiving
             while Messages_Waiting loop
-               --  declare
-               --     --  Iterations : Integer := 0;
-               --  begin
                case Current_State is
                   when Searching =>
                      Respond_To_Message_Searching;
@@ -262,18 +232,13 @@ package body Vehicle_Task_Type is
                   when Approaching_Globe =>
                      Respond_To_Message_Approaching_Globe;
                end case;
-                  --  if Iterations > Max_Mailbox_Checks then
-                  --     exit;
-                  --  end if;
-                  --  Iterations := Iterations + 1;
-               --  end;
             end loop;
 
             -- message sending / state
             case Current_State is
                when Searching =>
                   if not (Energy_Globes_Around'Length = 0) then
-                     -- find first Globe
+                     -- find first Globe, assigned as Coordinator
                      Target_Globe_Pos := Find_Closest_Globe (Energy_Globes_Around);
                      Send ((Purpose   => Broadcast_Globe_Pos,
                             Sender_No => Vehicle_No,
@@ -303,15 +268,13 @@ package body Vehicle_Task_Type is
                      --  Put_Line ("Globe at: " & Real'Image (Target_Globe_Pos (x)) & Real'Image (Target_Globe_Pos (y)) & Real'Image (Target_Globe_Pos (z)));
                   end if;
 
+                  -- ensure there is a short delay between releases
                   if Pause_Duration < 1 then
-                     if Waiting_Vehicles.Is_Empty then
-                        --  Put_Line ("ERROR - no vehicles waiting");
-                        null;
-                     else
+                     if not Waiting_Vehicles.Is_Empty then
                         Lowest_Charge_No := Min_Map_Charge (Waiting_Vehicles);
+                        Waiting_Vehicles.Exclude (Lowest_Charge_No);
                         if not (Lowest_Charge_No = Vehicle_No) then
-                           Waiting_Vehicles.Exclude (Lowest_Charge_No);
-                           --  Wait_Duration := Release_Delay;
+                           -- release vehicle with lowest charge
                            Send ((Purpose   => Release,
                                   Sender_No => Vehicle_No,
                                   Target_No => Lowest_Charge_No,
@@ -319,9 +282,6 @@ package body Vehicle_Task_Type is
                                   Globe_Pos => Target_Globe_Pos,
                                   Forward_Count => 0
                                  ));
-                           --  Set_Destination ((Target_Globe_Pos (x), Target_Globe_Pos (y) + 0.5, Target_Globe_Pos (z)));
-                           --  Set_Throttle (1.0);
-                           --  delay (0.5);
                            Debug_Print (Positive'Image (Vehicle_No) &
                                           " Coordinator attemped to release " &
                                           Positive'Image (Lowest_Charge_No));
@@ -332,11 +292,13 @@ package body Vehicle_Task_Type is
                      Pause_Duration := Pause_Duration - 1;
                   end if;
                when Waiting_For_Turn =>
+                  -- if charge critical, override Coordinator and approach Globe
                   if Current_Charge < 0.2 then
                      Current_State := Approaching_Globe;
                      Debug_Print (Positive'Image (Vehicle_No) &
                                     " approaching Globe due to critical charge");
                   elsif Pause_Duration < 1 then
+                     -- send charge info to Coordinator periodically
                      Send ((Purpose   => Notify_Of_Charge,
                             Sender_No => Vehicle_No,
                             Target_No => Coordinator_No,
@@ -347,15 +309,14 @@ package body Vehicle_Task_Type is
                   else
                      Pause_Duration := Pause_Duration - 1;
                   end if;
-                  null;
                when others =>
-                  --  Put_Line (Real'Image (Target_Globe_Pos (x)) & Real'Image (Target_Globe_Pos (y)) & Real'Image (Target_Globe_Pos (z)));
                   null;
             end case;
 
             -- movement
             case Current_State is
                when Coordinator =>
+                  -- stay close to Globe while Coordinator
                   if Calculate_Distance_To_Pos (Target_Globe_Pos) < Coordinator_Dist then
                      Set_Throttle (0.0);
                   else
@@ -363,6 +324,7 @@ package body Vehicle_Task_Type is
                      Set_Throttle (0.5);
                   end if;
                when Waiting_For_Turn =>
+                  -- maintain distance from Globe while waiting
                   if Calculate_Distance_To_Pos (Target_Globe_Pos) < Waiting_Dist then
                      Set_Throttle (0.0);
                   else
@@ -370,6 +332,7 @@ package body Vehicle_Task_Type is
                      Set_Throttle (0.5);
                   end if;
                when Approaching_Globe =>
+                  -- high throttle to Globe when released, return to waiting when charge is restored
                   Set_Destination (Target_Globe_Pos);
                   if Calculate_Distance_To_Pos (Target_Globe_Pos) > 0.05 then
                      Set_Throttle (1.0);
