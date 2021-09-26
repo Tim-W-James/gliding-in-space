@@ -115,6 +115,9 @@ package body Vehicle_Task_Type is
                Current_State    := Waiting_For_Turn;
                Waiting_Vehicles.Clear;
                Pause_Duration := Notify_Delay;
+               --  Debug_Print (Positive'Image (Vehicle_No) &
+               --                 " is now waiting on Coordinator " &
+               --                 Positive'Image (Coordinator_No));
             when others =>
                null;
          end case;
@@ -154,12 +157,12 @@ package body Vehicle_Task_Type is
                         ));
                end if;
             when Release =>
-               if Last_Message.Target_No = Vehicle_No then
+               if Last_Message.Target_No = Vehicle_No and then Current_Charge < 0.8 then
                   -- vehicle's turn to approach globe
                   Target_Globe_Pos := Last_Message.Globe_Pos;
                   Current_State := Approaching_Globe;
                   Debug_Print (Positive'Image (Vehicle_No) &
-                                 " recieved release and travelling to Globe from Coordinator " &
+                                 " received release and travelling to Globe from Coordinator " &
                                  Positive'Image (Coordinator_No));
                elsif Last_Message.Forward_Count < Max_Forwards then
                   -- forward release message
@@ -283,7 +286,7 @@ package body Vehicle_Task_Type is
                                   Forward_Count => 0
                                  ));
                            Debug_Print (Positive'Image (Vehicle_No) &
-                                          " Coordinator attemped to release " &
+                                          " Coordinator attempted to release " &
                                           Positive'Image (Lowest_Charge_No));
                         end if;
                      end if;
